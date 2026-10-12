@@ -1,0 +1,3 @@
+# Données et configuration propres au tenant : à ne jamais publier
+tenant.config.json
+data/tenant.js
