@@ -10,6 +10,15 @@ Double-cliquez sur **`Lancer-Veille.cmd`** : il collecte les sources puis ouvre 
 - Pour actualiser seulement les données : `powershell -ExecutionPolicy Bypass -File collect.ps1`
 - `index.html` peut aussi être ouvert directement par double-clic.
 
+## Hébergement sur Azure Web App (privé, recommandé)
+
+Le workflow `.github/workflows/veille.yml` lance la collecte toutes les heures, puis déploie le site sur une Azure Web App (Windows). L'authentification se fait par fédération d'identité GitHub → Entra, sans aucun secret. L'accès au site est protégé par l'authentification App Service (Microsoft Entra). Le fichier `web.config` configure IIS.
+
+Variables du dépôt : `TENANT_ID`, `CLIENT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_WEBAPP_NAME`, et `PUBLISH_TENANT_MESSAGES=true` une fois l'authentification active. L'application Entra a besoin :
+- de la fédération GitHub (branche `main`) ;
+- des permissions Graph d'application `ServiceMessage.Read.All` et `ServiceHealth.Read.All` ;
+- du rôle Azure **Website Contributor** sur la Web App.
+
 ## Accès depuis n'importe où (GitHub Pages, gratuit)
 
 1. Créez un dépôt GitHub (privé ou public) et déposez-y **tous** les fichiers de ce dossier, y compris `.github/workflows/veille.yml`.

@@ -1,54 +1,62 @@
-# Collecte les sources toutes les 3 heures et publie le site sur GitHub Pages.
+# Veille techno : collecte les sources toutes les heures et déploie le site sur une Azure Web App.
+# Authentification sans secret (fédération d'identité GitHub -> Entra) pour :
+#   - la lecture de l'état des services du tenant (Microsoft Graph)
+#   - le déploiement sur la Web App (Azure)
+#
+# Variables du dépôt (Settings > Secrets and variables > Actions > Variables) :
+#   TENANT_ID               : ID du tenant Entra
+#   CLIENT_ID               : ID client de l'application Entra (fédération GitHub configurée)
+#   AZURE_SUBSCRIPTION_ID   : ID de l'abonnement Azure qui contient la Web App
+#   AZURE_WEBAPP_NAME       : nom de la Web App
+#   PUBLISH_TENANT_MESSAGES : "true" pour publier aussi le Message Center du tenant
+#                             (à activer seulement une fois l'authentification Entra active sur la Web App)
 name: Veille techno
 
 on:
   schedule:
-    - cron: "17 */3 * * *"
+    - cron: "7 * * * *"   # toutes les heures (heure UTC)
   workflow_dispatch:
   push:
     branches: [main]
 
 permissions:
   contents: read
-  pages: write
   id-token: write
 
 concurrency:
-  group: pages
+  group: veille-deploy
   cancel-in-progress: true
 
 jobs:
-  build:
+  build-deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Collecte des sources
         shell: pwsh
-        # Etat des services du tenant : federation d'identite GitHub -> Entra (aucun secret).
-        # Variables du depot (Settings > Secrets and variables > Actions > Variables) :
-        #   TENANT_ID, CLIENT_ID          : obligatoires pour la partie tenant (sinon elle est ignoree)
-        #   PUBLISH_TENANT_MESSAGES=true  : publie aussi les messages du Message Center (par defaut : non)
         env:
           TENANT_ID: ${{ vars.TENANT_ID }}
           CLIENT_ID: ${{ vars.CLIENT_ID }}
           TENANT_MESSAGES: ${{ vars.PUBLISH_TENANT_MESSAGES == 'true' && 'true' || 'false' }}
         run: ./collect.ps1
+
       - name: Preparation du site
         run: |
           mkdir -p _site/data _site/icons
-          cp index.html app.js styles.css _site/
+          cp index.html app.js styles.css web.config _site/
           cp icons/*.svg _site/icons/
           cp data/*.js _site/data/
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Connexion a Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.CLIENT_ID }}
+          tenant-id: ${{ vars.TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploiement sur la Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          package: _site

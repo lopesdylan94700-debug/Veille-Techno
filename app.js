@@ -354,8 +354,11 @@
   const snapshot = window.SNAPSHOT || { items: [], report: [], generated: null };
   let TENANT = window.TENANT || null;
   // Actualisation du tenant possible uniquement via le serveur local (serve.ps1 / Lancer-Veille.cmd), qui détient le certificat
-  const TENANT_API = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname) ? 'api/tenant' : null;
-  const TENANT_REFRESH_MS = 5 * 60 * 1000;
+  const IS_LOCAL_SERVER = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+  // - serveur local : relance la collecte (api/tenant)
+  // - site hébergé (Azure Web App) : relit data/tenant.js, régénéré par GitHub Actions à chaque déploiement
+  const TENANT_API = IS_LOCAL_SERVER ? 'api/tenant' : (/^https?:$/.test(location.protocol) ? 'data/tenant.js' : null);
+  const TENANT_REFRESH_MS = (IS_LOCAL_SERVER ? 5 : 10) * 60 * 1000;
   let tenantInfo = { loading: false, live: false, error: null };
 
   const $ = s => document.querySelector(s);
@@ -1111,9 +1114,10 @@
     const inc = allActive.filter(i => i.classification === 'incident').length;
     const note = tenantInfo.loading ? '<span class="spinning">⟳</span> Actualisation en cours depuis votre tenant…'
       : 'Données de votre tenant du ' + (gen ? fmtShort(gen) + ' à ' + fmtTime(gen) : '—') + '. ' +
-      (TENANT_API ? 'Actualisation automatique toutes les 5 minutes, ou immédiate avec le bouton ⟳ en haut à droite.' + (tenantInfo.error ? ' Dernière tentative en échec : ' + esc(tenantInfo.error) + '.' : '')
-        : /github\.io$/.test(location.hostname) ? 'Actualisées automatiquement toutes les 3 heures par GitHub Actions.'
-          : 'Ouvrez l\'application via Lancer-Veille.cmd pour l\'actualiser en direct (ici, seule une nouvelle collecte la met à jour).');
+      (IS_LOCAL_SERVER ? 'Actualisation automatique toutes les 5 minutes, ou immédiate avec le bouton ⟳ en haut à droite.'
+        : TENANT_API ? 'Collectées toutes les heures par GitHub Actions ; la page les relit toutes les 10 minutes (ou avec le bouton ⟳).'
+          : 'Ouvrez l\'application via Lancer-Veille.cmd pour l\'actualiser en direct (ici, seule une nouvelle collecte la met à jour).') +
+      (tenantInfo.error ? ' Dernière tentative en échec : ' + esc(tenantInfo.error) + '.' : '');
     let html = '<p class="health-note">' + note + '</p>' +
       '<div class="kpis">' +
       '<div class="kpi ok"><div class="v">' + (services.length - degraded) + '<small>/' + services.length + '</small></div><div class="l">Services opérationnels</div></div>' +
@@ -1244,8 +1248,11 @@
     if (tab === 'health') render();
     try {
       const r = await fetch(TENANT_API, { cache: 'no-store' });
+      if (r.status === 404 && !IS_LOCAL_SERVER) { tenantInfo = { loading: false, live: false, error: null }; return; } // pas de données tenant publiées
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      TENANT = await r.json();
+      // api/tenant renvoie du JSON ; data/tenant.js contient « window.TENANT = {...}; »
+      const txt = await r.text();
+      TENANT = JSON.parse(IS_LOCAL_SERVER ? txt : txt.replace(/^\s*window\.TENANT\s*=\s*/, '').replace(/;\s*$/, ''));
       tenantInfo = { loading: false, live: true, error: TENANT.error || null };
     } catch (e) {
       tenantInfo = { loading: false, live: false, error: e.message };
