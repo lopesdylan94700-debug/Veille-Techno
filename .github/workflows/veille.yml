@@ -24,6 +24,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Collecte des sources
         shell: pwsh
+        # Etat des services du tenant : federation d'identite GitHub -> Entra (aucun secret).
+        # Variables du depot (Settings > Secrets and variables > Actions > Variables) :
+        #   TENANT_ID, CLIENT_ID          : obligatoires pour la partie tenant (sinon elle est ignoree)
+        #   PUBLISH_TENANT_MESSAGES=true  : publie aussi les messages du Message Center (par defaut : non)
+        env:
+          TENANT_ID: ${{ vars.TENANT_ID }}
+          CLIENT_ID: ${{ vars.CLIENT_ID }}
+          TENANT_MESSAGES: ${{ vars.PUBLISH_TENANT_MESSAGES == 'true' && 'true' || 'false' }}
         run: ./collect.ps1
       - name: Preparation du site
         run: |
@@ -31,8 +39,6 @@ jobs:
           cp index.html app.js styles.css _site/
           cp icons/*.svg _site/icons/
           cp data/*.js _site/data/
-          # Les donnees du tenant ne doivent jamais etre publiees
-          rm -f _site/data/tenant.js
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

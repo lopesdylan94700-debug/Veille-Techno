@@ -1112,7 +1112,8 @@
     const note = tenantInfo.loading ? '<span class="spinning">⟳</span> Actualisation en cours depuis votre tenant…'
       : 'Données de votre tenant du ' + (gen ? fmtShort(gen) + ' à ' + fmtTime(gen) : '—') + '. ' +
       (TENANT_API ? 'Actualisation automatique toutes les 5 minutes, ou immédiate avec le bouton ⟳ en haut à droite.' + (tenantInfo.error ? ' Dernière tentative en échec : ' + esc(tenantInfo.error) + '.' : '')
-        : 'Ouvrez l\'application via Lancer-Veille.cmd pour l\'actualiser en direct (ici, seule une nouvelle collecte la met à jour).');
+        : /github\.io$/.test(location.hostname) ? 'Actualisées automatiquement toutes les 3 heures par GitHub Actions.'
+          : 'Ouvrez l\'application via Lancer-Veille.cmd pour l\'actualiser en direct (ici, seule une nouvelle collecte la met à jour).');
     let html = '<p class="health-note">' + note + '</p>' +
       '<div class="kpis">' +
       '<div class="kpi ok"><div class="v">' + (services.length - degraded) + '<small>/' + services.length + '</small></div><div class="l">Services opérationnels</div></div>' +

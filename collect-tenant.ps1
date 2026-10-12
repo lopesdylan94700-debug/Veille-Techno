@@ -1,10 +1,14 @@
 <#
-  Veille techno - collecte des donnees de VOTRE tenant (Microsoft Graph, authentification par certificat)
+  Veille techno - collecte des donnees de VOTRE tenant (Microsoft Graph)
   - Message Center du tenant, etat des services, incidents/avis (en cours + modifies depuis 30 jours)
-  - Necessite tenant.config.json (tenantId, clientId, certThumbprint) et le certificat avec sa cle privee
-    dans Cert:\CurrentUser\My ou Cert:\LocalMachine\My.
   - Seules les API Service Communications (/admin/serviceAnnouncement/...) sont appelees.
-  - Resultat : data/tenant.js (fichier local, exclu de Git et de la publication).
+  - Resultat : data/tenant.js
+  Deux modes d'authentification :
+  1. Poste local : tenant.config.json (tenantId, clientId, certThumbprint) + certificat avec cle privee
+     dans Cert:\CurrentUser\My ou Cert:\LocalMachine\My.
+  2. GitHub Actions : variables TENANT_ID et CLIENT_ID + federation d'identite (jeton OIDC GitHub,
+     aucun secret stocke). Le workflow doit avoir la permission "id-token: write".
+  Variable TENANT_MESSAGES=false : n'inclut pas les messages du Message Center (seulement l'etat des services).
   Appele par collect.ps1 et par serve.ps1 (bouton "Recharger" de la page).
 #>
 $ErrorActionPreference = 'Continue'
@@ -29,6 +33,16 @@ function Strip-Html([string]$html) {
 function B64Url([byte[]]$b) { [Convert]::ToBase64String($b).TrimEnd('=').Replace('+', '-').Replace('/', '_') }
 
 function Get-GraphToken($cfg) {
+  $tokenUrl = "https://login.microsoftonline.com/$($cfg.tenantId)/oauth2/v2.0/token"
+  # Mode GitHub Actions : le jeton OIDC de GitHub sert d'assertion (federation configuree sur l'application Entra)
+  if (-not $cfg.certThumbprint) {
+    if (-not $env:ACTIONS_ID_TOKEN_REQUEST_URL) { throw 'ni certificat ni jeton GitHub OIDC disponible (permission id-token: write ?)' }
+    $oidc = (Invoke-RestMethod -Uri ($env:ACTIONS_ID_TOKEN_REQUEST_URL + '&audience=api://AzureADTokenExchange') -Headers @{ Authorization = "bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN" }).value
+    $body = @{ client_id = $cfg.clientId; scope = 'https://graph.microsoft.com/.default'; grant_type = 'client_credentials'
+      client_assertion_type = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'; client_assertion = $oidc }
+    return (Invoke-RestMethod -Method Post -Uri $tokenUrl -Body $body).access_token
+  }
+  # Mode poste local : assertion signee avec le certificat
   $cert = Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $cfg.certThumbprint -and $_.HasPrivateKey } | Select-Object -First 1
   if (-not $cert) { throw "certificat $($cfg.certThumbprint) introuvable (ou sans cle privee)" }
   $t = [int][double]::Parse((Get-Date -UFormat %s))
@@ -39,7 +53,7 @@ function Get-GraphToken($cfg) {
   $sig = $rsa.SignData([Text.Encoding]::UTF8.GetBytes($unsigned), [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.RSASignaturePadding]::Pkcs1)
   $body = @{ client_id = $cfg.clientId; scope = 'https://graph.microsoft.com/.default'; grant_type = 'client_credentials'
     client_assertion_type = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'; client_assertion = ($unsigned + '.' + (B64Url $sig)) }
-  return (Invoke-RestMethod -Method Post -Uri "https://login.microsoftonline.com/$($cfg.tenantId)/oauth2/v2.0/token" -Body $body).access_token
+  return (Invoke-RestMethod -Method Post -Uri $tokenUrl -Body $body).access_token
 }
 
 function Get-GraphAll($url, $headers) {
@@ -55,14 +69,16 @@ function Get-GraphAll($url, $headers) {
 }
 
 $cfgPath = Join-Path $root 'tenant.config.json'
-if (-not (Test-Path $cfgPath)) { Write-Host '  (pas de tenant.config.json : collecte du tenant ignoree)'; return }
+if (Test-Path $cfgPath) { $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json }
+elseif ($env:TENANT_ID -and $env:CLIENT_ID) { $cfg = [pscustomobject]@{ tenantId = $env:TENANT_ID; clientId = $env:CLIENT_ID; certThumbprint = $null } }
+else { Write-Host '  (ni tenant.config.json ni variables TENANT_ID / CLIENT_ID : collecte du tenant ignoree)'; return }
+$includeMessages = $env:TENANT_MESSAGES -ne 'false'
 
-$result = [ordered]@{ generated = (To-Iso $now); messages = @(); health = $null; issues = $null; issuesError = $null; error = $null }
+$result = [ordered]@{ generated = (To-Iso $now); messagesPublished = $includeMessages; messages = @(); health = $null; issues = $null; issuesError = $null; error = $null }
 try {
-  $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
   $h = @{ Authorization = 'Bearer ' + (Get-GraphToken $cfg) }
   # Sans $top : la pagination (@odata.nextLink) ramene tous les messages
-  $msgs = Get-GraphAll 'https://graph.microsoft.com/v1.0/admin/serviceAnnouncement/messages' $h
+  $msgs = if ($includeMessages) { Get-GraphAll 'https://graph.microsoft.com/v1.0/admin/serviceAnnouncement/messages' $h } else { @() }
   foreach ($m in $msgs) {
     $result.messages += [ordered]@{
       id = $m.id; title = $m.title; category = $m.category; severity = $m.severity; major = [bool]$m.isMajorChange
