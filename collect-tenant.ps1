@@ -6,8 +6,9 @@
   Deux modes d'authentification :
   1. Poste local : tenant.config.json (tenantId, clientId, certThumbprint) + certificat avec cle privee
      dans Cert:\CurrentUser\My ou Cert:\LocalMachine\My.
-  2. GitHub Actions : variables TENANT_ID et CLIENT_ID + federation d'identite (jeton OIDC GitHub,
-     aucun secret stocke). Le workflow doit avoir la permission "id-token: write".
+  2. CI : variables TENANT_ID et CLIENT_ID + federation d'identite (aucun secret stocke) :
+     - GitHub Actions : jeton OIDC GitHub (permission "id-token: write")
+     - GitLab CI      : jeton OIDC GitLab dans AZURE_FEDERATED_TOKEN (mot-cle id_tokens)
   Variable TENANT_MESSAGES=false : n'inclut pas les messages du Message Center (seulement l'etat des services).
   Appele par collect.ps1 et par serve.ps1 (bouton "Recharger" de la page).
 #>
@@ -34,10 +35,18 @@ function B64Url([byte[]]$b) { [Convert]::ToBase64String($b).TrimEnd('=').Replace
 
 function Get-GraphToken($cfg) {
   $tokenUrl = "https://login.microsoftonline.com/$($cfg.tenantId)/oauth2/v2.0/token"
-  # Mode GitHub Actions : le jeton OIDC de GitHub sert d'assertion (federation configuree sur l'application Entra)
+  # Mode CI (GitHub Actions ou GitLab CI) : le jeton OIDC de la plateforme sert d'assertion
+  # (federation d'identite configuree sur l'application Entra)
   if (-not $cfg.certThumbprint) {
-    if (-not $env:ACTIONS_ID_TOKEN_REQUEST_URL) { throw 'ni certificat ni jeton GitHub OIDC disponible (permission id-token: write ?)' }
-    $oidc = (Invoke-RestMethod -Uri ($env:ACTIONS_ID_TOKEN_REQUEST_URL + '&audience=api://AzureADTokenExchange') -Headers @{ Authorization = "bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN" }).value
+    if ($env:AZURE_FEDERATED_TOKEN) {
+      # GitLab CI : jeton fourni par le mot-cle id_tokens du pipeline (.gitlab-ci.yml)
+      $oidc = $env:AZURE_FEDERATED_TOKEN
+    }
+    elseif ($env:ACTIONS_ID_TOKEN_REQUEST_URL) {
+      # GitHub Actions : jeton demande au service OIDC de GitHub (permission id-token: write)
+      $oidc = (Invoke-RestMethod -Uri ($env:ACTIONS_ID_TOKEN_REQUEST_URL + '&audience=api://AzureADTokenExchange') -Headers @{ Authorization = "bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN" }).value
+    }
+    else { throw 'ni certificat ni jeton OIDC (GitHub id-token ou GitLab id_tokens) disponible' }
     $body = @{ client_id = $cfg.clientId; scope = 'https://graph.microsoft.com/.default'; grant_type = 'client_credentials'
       client_assertion_type = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'; client_assertion = $oidc }
     return (Invoke-RestMethod -Method Post -Uri $tokenUrl -Body $body).access_token

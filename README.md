@@ -19,6 +19,15 @@ Variables du dépôt : `TENANT_ID`, `CLIENT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE
 - des permissions Graph d'application `ServiceMessage.Read.All` et `ServiceHealth.Read.All` ;
 - du rôle Azure **Website Contributor** sur la Web App.
 
+### Variante GitLab CI
+
+Le fichier `.gitlab-ci.yml` fait la même chose depuis un GitLab : collecte avec l'image PowerShell, puis déploiement avec Azure CLI. L'authentification passe par une fédération d'identité GitLab → Entra (mot-clé `id_tokens`). Dans Entra, l'information d'identification fédérée est de type « Autre émetteur » :
+- émetteur = adresse de l'instance GitLab ;
+- sujet = `project_path:<groupe>/<projet>:ref_type:branch:ref:main` ;
+- audience = `api://AzureADTokenExchange`.
+
+Variables CI/CD : celles de GitHub, plus `AZURE_RESOURCE_GROUP`. Planification : **Build → Pipeline schedules**. Prérequis : l'instance GitLab doit être joignable depuis Internet, pour qu'Entra puisse valider ses jetons, et les runners doivent avoir un accès Internet.
+
 ## Accès depuis n'importe où (GitHub Pages, gratuit)
 
 1. Créez un dépôt GitHub (privé ou public) et déposez-y **tous** les fichiers de ce dossier, y compris `.github/workflows/veille.yml`.

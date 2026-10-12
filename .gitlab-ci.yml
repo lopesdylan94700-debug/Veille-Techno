@@ -1,0 +1,54 @@
+# Veille techno - pipeline GitLab CI
+# Collecte les sources puis deploie le site sur une Azure Web App (Windows).
+# Authentification sans secret : federation d'identite GitLab -> Entra (jeton OIDC, mot-cle id_tokens).
+#
+# Variables (Settings > CI/CD > Variables) :
+#   TENANT_ID               : ID du tenant Entra
+#   CLIENT_ID               : ID client de l'application Entra (federation GitLab configuree)
+#   AZURE_SUBSCRIPTION_ID   : ID de l'abonnement Azure qui contient la Web App
+#   AZURE_RESOURCE_GROUP    : groupe de ressources de la Web App
+#   AZURE_WEBAPP_NAME       : nom de la Web App
+#   PUBLISH_TENANT_MESSAGES : "true" pour publier aussi le Message Center du tenant
+#                             (seulement si l'authentification Entra est active sur la Web App)
+#
+# Planification : Build > Pipeline schedules (ex. "7 * * * *" = toutes les heures).
+
+stages:
+  - collect
+  - deploy
+
+# Execution sur la branche main uniquement (envoi de code, planification ou lancement manuel)
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+collect:
+  stage: collect
+  image: mcr.microsoft.com/powershell:lts-ubuntu-22.04
+  id_tokens:
+    AZURE_FEDERATED_TOKEN:
+      aud: api://AzureADTokenExchange
+  script:
+    - if [ "$PUBLISH_TENANT_MESSAGES" = "true" ]; then export TENANT_MESSAGES=true; else export TENANT_MESSAGES=false; fi
+    - pwsh -NoProfile -File ./collect.ps1
+    - mkdir -p _site/data _site/icons
+    - cp index.html app.js styles.css web.config _site/
+    - cp icons/*.svg _site/icons/
+    - cp data/*.js _site/data/
+    - pwsh -NoProfile -Command "Compress-Archive -Path _site/* -DestinationPath site.zip -Force"
+  artifacts:
+    paths:
+      - site.zip
+    expire_in: 1 day
+
+deploy:
+  stage: deploy
+  image: mcr.microsoft.com/azure-cli:latest
+  needs: [collect]
+  id_tokens:
+    AZURE_FEDERATED_TOKEN:
+      aud: api://AzureADTokenExchange
+  script:
+    - az login --service-principal --username "$CLIENT_ID" --tenant "$TENANT_ID" --federated-token "$AZURE_FEDERATED_TOKEN" --output none
+    - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+    - az webapp deploy --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_NAME" --src-path site.zip --type zip --clean true
