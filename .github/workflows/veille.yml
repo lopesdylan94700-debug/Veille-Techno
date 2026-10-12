@@ -1,0 +1,48 @@
+# Collecte les sources toutes les 3 heures et publie le site sur GitHub Pages.
+name: Veille techno
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collecte des sources
+        shell: pwsh
+        run: ./collect.ps1
+      - name: Preparation du site
+        run: |
+          mkdir -p _site/data _site/icons
+          cp index.html app.js styles.css _site/
+          cp icons/*.svg _site/icons/
+          cp data/*.js _site/data/
+          # Les donnees du tenant ne doivent jamais etre publiees
+          rm -f _site/data/tenant.js
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
